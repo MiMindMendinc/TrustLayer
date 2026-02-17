@@ -1,0 +1,32 @@
+{
+  "name": "trustlayer",
+  "version": "1.0.0",
+  "description": "Lightweight safety & compliance gateway for LLM chat completions APIs. Features: PII redaction, jailbreak detection, topic blocking, math corrections, deterministic logs, SSE passthrough.",
+  "main": "trustlayer.js",
+  "scripts": {
+    "start": "node trustlayer.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "llm",
+    "ai",
+    "safety",
+    "compliance",
+    "gateway",
+    "proxy",
+    "pii",
+    "redaction",
+    "jailbreak",
+    "chat",
+    "openai"
+  ],
+  "author": "Lyle",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MiMindMendinc/TrustLayer.git"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

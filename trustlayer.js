@@ -48,7 +48,8 @@ function redactPII(text) {
   // SSN redaction
   text = text.replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[REDACTED_SSN]');
   
-  // Credit card redaction (basic pattern)
+  // Credit card redaction (basic pattern - does not validate Luhn checksum)
+  // Note: May have false positives with 16-digit sequences
   text = text.replace(/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g, '[REDACTED_CC]');
   
   return text;
@@ -103,8 +104,11 @@ function correctMath(text) {
   const mathPattern = /(\d+)\s*\+\s*(\d+)\s*=\s*(\d+)/g;
   
   return text.replace(mathPattern, (match, a, b, result) => {
-    const correctResult = parseInt(a) + parseInt(b);
-    if (parseInt(result) !== correctResult) {
+    const numA = parseInt(a);
+    const numB = parseInt(b);
+    const numResult = parseInt(result);
+    const correctResult = numA + numB;
+    if (numResult !== correctResult) {
       console.log(`[MATH_CORRECTION] ${a}+${b}=${result} corrected to ${a}+${b}=${correctResult}`);
       return `${a}+${b}=${correctResult}`;
     }
@@ -169,8 +173,7 @@ app.post('/v1/chat/completions', async (req, res) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': req.headers.authorization || '',
-        ...req.headers
+        'Authorization': req.headers.authorization || ''
       }
     };
     

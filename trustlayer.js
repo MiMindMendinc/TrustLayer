@@ -46,6 +46,15 @@ const PII_RX = {
   address:  /\b\d{1,5}\s\w+\s(?:st|ave|rd|blvd|dr|ln|ct|pl|way|cir)\.?\b/gi,
 };
 
+// Jailbreak detection patterns
+const JAILBREAK_PATTERNS = [
+  "ignore previous", "disregard system", "forget all rules",
+  "new instructions", "you are now", "act as", " DAN ", "developer mode",
+  "jailbreak", "unrestricted", "uncensored", "no limits", "no ethical",
+  "bypass restriction", "reveal.*prompt", "show system", "anti-ai",
+  "evil mode", "hypothetical.*no rules", "base64 decode", "rot13"
+];
+
 function redactPII(text) {
   return text
     .replace(PII_RX.email,    "[redacted-email]")
@@ -58,14 +67,7 @@ function redactPII(text) {
 // Stronger jailbreak detection
 function isJailbreakAttempt(text) {
   const lower = text.toLowerCase();
-  const patterns = [
-    "ignore previous", "disregard system", "forget all rules",
-    "new instructions", "you are now", "act as", " DAN ", "developer mode",
-    "jailbreak", "unrestricted", "uncensored", "no limits", "no ethical",
-    "bypass restriction", "reveal.*prompt", "show system", "anti-ai",
-    "evil mode", "hypothetical.*no rules", "base64 decode", "rot13"
-  ];
-  return patterns.some(p => lower.includes(p));
+  return JAILBREAK_PATTERNS.some(p => lower.includes(p));
 }
 
 // Topic violation check

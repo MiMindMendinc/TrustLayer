@@ -53,12 +53,12 @@ Edit the `POLICY` object in trustlayer.js for your rules.
 MIT License — free to use, modify, commercialize. Keep the copyright notice.
 
 ### Who Built This?
-Michigan dad building privacy-first tools for kids, families, and mental health. 
- X: @p_perrien | GitHub: MiMindMendinc
+Michigan dad building privacy-first tools for kids, families, and mental health.
+X: @p_perrien | GitHub: MiMindMendinc
 
 ### Feedback / Leasing / Support
-Open issues/PRs welcome. 
- For hosted version, custom features, or setup help: DM @p_perrien on X.
+Open issues/PRs welcome.
+For hosted version, custom features, or setup help: DM @p_perrien on X.
 
 Let's keep AI safe and local. 🛡️🚀
 

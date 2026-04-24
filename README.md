@@ -1,128 +1,140 @@
-# TrustLayer: Lightweight Safety & Compliance Gateway for LLM APIs
+# TrustLayer
 
-**The plug-and-play Node.js proxy ensuring LLM API calls are safe, compliant, and auditable.**
+**A lightweight LLM safety gateway for privacy-aware chat-completion apps.**
 
-`TrustLayer` is a high-performance, lightweight Node.js proxy developed by **Michigan MindMend Inc.**, designed to sit between your applications and Large Language Model (LLM) APIs. It provides essential safety and compliance features, including PII redaction, jailbreak detection, topic blocking, and deterministic logging, all while maintaining low latency and high throughput. `TrustLayer` is your go-to solution for integrating LLMs responsibly into production environments.
+TrustLayer is a Michigan MindMend Inc. prototype that sits between an application and an OpenAI-style `/v1/chat/completions` endpoint. It demonstrates practical safety middleware for LLM systems: PII redaction, jailbreak/prompt-injection detection, topic blocking, streaming passthrough, and deterministic audit logging.
 
-## 🛡️ Key Features & Production Readiness
+This repo is built as a portfolio-quality example of **AI safety engineering**, **privacy-first product thinking**, and **local/edge-friendly LLM infrastructure**.
 
-- **PII Redaction**: Automatically identifies and redacts Personally Identifiable Information (PII) from both prompts and completions, ensuring data privacy.
-- **Jailbreak Detection**: Proactively identifies and blocks attempts to bypass LLM safety mechanisms or extract sensitive information.
-- **Topic Blocking**: Configurable filters to prevent discussions on sensitive or prohibited topics, aligning with content policies.
-- **Math Corrections**: Ensures numerical accuracy in LLM outputs, crucial for applications requiring precise calculations.
-- **Deterministic Logs**: Generates immutable, auditable logs of all API interactions and safety decisions, vital for compliance and debugging.
-- **SSE Passthrough**: Seamlessly handles Server-Sent Events (SSE) for streaming LLM responses, maintaining real-time user experience.
-- **Lightweight & High-Performance**: Built with Node.js, optimized for minimal overhead and maximum throughput, capable of handling high volumes of API traffic.
-- **Plug-and-Play Deployment**: Easy integration into existing infrastructure as a reverse proxy or middleware.
+---
 
-## 🏗️ Architectural Deep-Dive
+## Why it matters
 
-`TrustLayer` functions as an intelligent API gateway, intercepting requests and responses to LLM providers. Its architecture is designed for extensibility, performance, and reliability.
+LLM apps should not send sensitive user data straight to a model provider without a safety layer. TrustLayer explores a simple pattern:
 
-```
-┌─────────────────────────────────────────┐
-│   Your Application                      │
-└──────────────┬──────────────────────────┘
-               │ (LLM API Request)
-               ▼
-┌─────────────────────────────────────────┐
-│   TrustLayer Proxy (Node.js)            │
-│  ┌───────────────────────────────────┐  │
-│  │ Request Interceptor               │  │
-│  │ - PII Redaction                   │  │
-│  │ - Jailbreak Detection             │  │
-│  │ - Topic Blocking                  │  │
-│  └───────────────────────────────────┘  │
-│  ┌───────────────────────────────────┐  │
-│  │ LLM API Connector                 │  │
-│  │ - Handles API Keys, Rate Limiting │  │
-│  └───────────────────────────────────┘  │
-│  ┌───────────────────────────────────┐  │
-│  │ Response Interceptor              │  │
-│  │ - PII Redaction                   │  │
-│  │ - Math Corrections                │  │
-│  └───────────────────────────────────┘  │
-│  ┌───────────────────────────────────┐  │
-│  │ Deterministic Logger              │  │
-│  │ - Immutable Audit Trail           │  │
-│  └───────────────────────────────────┘  │
-└─────────────────────────────────────────┘
-               │ (Sanitized Request / Response)
-               ▼
-┌─────────────────────────────────────────┐
-│   LLM Provider (e.g., OpenAI, Anthropic)│
-└─────────────────────────────────────────┘
+```text
+App → TrustLayer safety gateway → LLM provider or local model server → TrustLayer response checks → App
 ```
 
-### Data Flow & Policy Enforcement
+The goal is not to replace full enterprise security review. The goal is to show how a small, understandable gateway can reduce risk before and after model calls.
 
-1.  **Application Request**: Your application sends an LLM API request to `TrustLayer` instead of directly to the LLM provider.
-2.  **Request Processing**: `TrustLayer` intercepts the request, applies PII redaction, checks for jailbreak attempts, and blocks prohibited topics.
-3.  **LLM Interaction**: The sanitized request is forwarded to the LLM provider.
-4.  **Response Processing**: The LLM provider's response is intercepted by `TrustLayer`, where PII redaction and math corrections are applied.
-5.  **Deterministic Logging**: All actions and decisions are logged, providing a clear, auditable record.
-6.  **Application Response**: The processed response is sent back to your application.
+---
 
-## 🔒 Compliance & Security Standards
+## What it does
 
-`TrustLayer` is engineered to assist in meeting stringent regulatory and security requirements:
+- **PII redaction** for common sensitive data patterns such as emails, phone numbers, SSNs, cards, and addresses.
+- **Jailbreak / prompt-injection detection** using configurable pattern checks.
+- **Topic blocking** for restricted or high-risk request categories.
+- **Streaming support** through Server-Sent Events passthrough.
+- **Audit logging** with hashed request/response records for reproducibility and debugging.
+- **OpenAI-style endpoint compatibility** for apps that already call `/v1/chat/completions`.
+- **Local-model friendly design** through configurable upstream base URLs.
 
--   **GDPR & CCPA**: Facilitates compliance by redacting PII and providing auditable processing logs.
--   **HIPAA**: Essential for healthcare applications, ensuring Protected Health Information (PHI) is not exposed through LLM interactions.
--   **Enterprise Security**: Enhances the security posture of LLM integrations by preventing common attack vectors like prompt injection and data leakage.
+---
 
-## 🛠️ Installation & Usage
+## Tech stack
 
-### Requirements
+- Node.js
+- HTTP proxy / middleware pattern
+- OpenAI-compatible chat-completions routing
+- JSONL audit logs
+- Regex-based policy checks
+- Streaming response handling
 
--   Node.js 16+
--   npm or yarn
+---
 
-### Installation
+## Current status
+
+**Active prototype / portfolio project.**
+
+This repository demonstrates the architecture and safety ideas, but it is not yet a hardened production package. The next cleanup pass should separate the experimental proxy paths into modules, add automated tests, and standardize the runtime style.
+
+Known engineering cleanup targets:
+
+- Split policy, redaction, logging, and proxy code into separate files.
+- Choose one runtime style and keep it consistent across the codebase.
+- Add unit tests for PII redaction, topic blocking, jailbreak detection, and streaming behavior.
+- Add example configs for OpenAI-compatible local servers such as Ollama/LiteLLM/vLLM.
+- Add Docker support and a simple demo app.
+
+---
+
+## Quick start
 
 ```bash
 git clone https://github.com/MiMindMendinc/TrustLayer.git
 cd TrustLayer
 npm install
-```
-
-### Configuration
-
-Create a `.env` file with your LLM API key and desired configurations:
-
-```dotenv
-OPENAI_API_KEY=sk-YOUR_OPENAI_API_KEY
-TRUSTLAYER_PORT=3000
-TRUSTLAYER_PII_REDACTION_ENABLED=true
-TRUSTLAYER_JAILBREAK_DETECTION_ENABLED=true
-TRUSTLAYER_TOPIC_BLOCKING_ENABLED=true
-TRUSTLAYER_BLOCKED_TOPICS=["illegal activities", "hate speech"]
-```
-
-### Running the Proxy
-
-```bash
 npm start
 ```
 
-### Basic Usage (Example with `curl`)
+Default local endpoint:
 
-Once `TrustLayer` is running, direct your API calls to its endpoint:
+```text
+http://localhost:3000/v1/chat/completions
+```
+
+Health check:
+
+```bash
+curl http://localhost:3000/health
+```
+
+Example request:
 
 ```bash
 curl -X POST http://localhost:3000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d 
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "gpt-4o-mini",
+    "messages": [
+      {"role": "user", "content": "My email is test@example.com. Summarize this safely."}
+    ]
+  }'
 ```
-
-## 🤝 Contributing
-
-We welcome contributions from developers passionate about LLM safety, privacy, and compliance. Please refer to our `CONTRIBUTING.md` for guidelines on how to get involved.
-
-## 📄 License
-
-`TrustLayer` is released under the MIT License. See `LICENSE` for more details.
 
 ---
 
-**Built by Michigan MindMend Inc.** | Advancing Privacy-First AI for Critical Applications | [Website](https://github.com/MiMindMendinc)
+## What I built / modified
+
+This project shows hands-on work in:
+
+- LLM middleware design
+- privacy and safety filters
+- API gateway routing
+- streaming response handling
+- deterministic logging concepts
+- safety-first product documentation
+
+---
+
+## Recruiter notes
+
+TrustLayer is the clearest example of my work in **LLM safety infrastructure**. It connects directly to roles involving AI safety, trust and safety automation, LLM evaluation, privacy engineering, AI product prototyping, and responsible AI systems.
+
+---
+
+## Roadmap
+
+- [ ] Modularize the gateway internals
+- [ ] Add Jest or Node test runner coverage
+- [ ] Add Dockerfile and compose example
+- [ ] Add local model examples
+- [ ] Add policy configuration file
+- [ ] Add benchmark and latency notes
+- [ ] Add screenshots / demo video
+
+---
+
+## Built by
+
+**Lyle Perrien II**  
+Founder, **Michigan MindMend Inc.**  
+Owosso, Michigan
+
+Building privacy-first, offline-first AI tools for youth safety, family wellness, and responsible local automation.
+
+## License
+
+MIT

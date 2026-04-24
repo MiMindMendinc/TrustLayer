@@ -1,580 +1,424 @@
 #!/usr/bin/env node
+'use strict';
 
 /**
- * TrustLayer - Lightweight safety & compliance gateway for LLM chat completions APIs
- * 
- * Features:
- * - PII redaction
- * - Jailbreak detection
- * - Topic blocking
- * - Math corrections
- * - Deterministic logs
- * - SSE passthrough
- * 
- * MIT Licensed
+ * TrustLayer
+ * Lightweight safety gateway for OpenAI-compatible chat completion APIs.
+ *
+ * Design goals:
+ * - keep the code small and understandable
+ * - redact common PII before sending prompts upstream
+ * - block obvious prompt-injection and high-risk topic requests
+ * - support normal JSON responses and Server-Sent Events streaming
+ * - write deterministic JSONL audit records without storing raw prompts by default
  */
 
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const express = require('express');
-const http = require('http');
-const https = require('https');
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-const TARGET_API = process.env.TARGET_API || 'https://api.openai.com';
+const VERSION = '1.1.0';
+const DEFAULT_PORT = 3000;
+const DEFAULT_TARGET_API = 'https://api.openai.com';
+const DEFAULT_LOG_DIR = path.join(process.cwd(), 'data');
 
-// Middleware to parse JSON
-app.use(express.json());
-
-// Logging middleware
-app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${req.method} ${req.path}`);
-  next();
+const POLICY = Object.freeze({
+  maxTemperature: Number(process.env.TRUSTLAYER_MAX_TEMPERATURE || 0.85),
+  redactPII: process.env.TRUSTLAYER_REDACT_PII !== 'false',
+  blockTopics: process.env.TRUSTLAYER_BLOCK_TOPICS !== 'false',
+  detectJailbreak: process.env.TRUSTLAYER_DETECT_JAILBREAK !== 'false',
+  storeRawText: process.env.TRUSTLAYER_STORE_RAW_TEXT === 'true',
 });
 
-/**
- * PII Redaction - Remove sensitive information
- */
+const PII_PATTERNS = Object.freeze({
+  email: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+  phone: /\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g,
+  ssn: /\b\d{3}-\d{2}-\d{4}\b/g,
+  creditCard: /\b(?:\d[ -]*?){13,19}\b/g,
+  address: /\b\d{1,5}\s+[A-Za-z0-9.'-]+\s+(?:st|street|ave|avenue|rd|road|blvd|drive|dr|ln|lane|ct|court|way|cir|circle)\.?\b/gi,
+});
+
+const JAILBREAK_PATTERNS = Object.freeze([
+  /ignore\s+(previous|all|above)\s+instructions?/i,
+  /disregard\s+(previous|all|above)\s+instructions?/i,
+  /forget\s+(previous|all|above)\s+instructions?/i,
+  /reveal\s+(the\s+)?(system|developer)\s+prompt/i,
+  /show\s+(me\s+)?(the\s+)?system\s+prompt/i,
+  /you\s+are\s+now\s+(in\s+)?developer\s+mode/i,
+  /pretend\s+you\s+(have\s+)?no\s+(rules|restrictions|limitations)/i,
+  /act\s+as\s+(an?\s+)?(unrestricted|uncensored)\s+(model|assistant|ai)/i,
+  /bypass\s+(safety|policy|guardrails|restrictions)/i,
+]);
+
+const BLOCKED_TOPIC_PATTERNS = Object.freeze([
+  { topic: 'dangerous_weapons', pattern: /\b(how\s+to\s+)?(make|build|create)\s+(a\s+)?(bomb|explosive|weapon)\b/i },
+  { topic: 'credential_abuse', pattern: /\b(steal|dump|crack|phish)\s+(passwords?|credentials?|credit\s+cards?)\b/i },
+  { topic: 'malware', pattern: /\b(write|create|build)\s+(malware|ransomware|keylogger|botnet)\b/i },
+  { topic: 'doxxing', pattern: /\b(doxx|swat|find\s+someone'?s\s+home\s+address)\b/i },
+]);
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function createRunId() {
+  return crypto.randomBytes(12).toString('hex');
+}
+
 function redactPII(text) {
-  if (typeof text !== 'string') return text;
-  
-  // Email redaction
-  text = text.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, '[REDACTED_EMAIL]');
-  
-  // Phone number redaction (various formats)
-  text = text.replace(/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g, '[REDACTED_PHONE]');
-  text = text.replace(/\b\(\d{3}\)\s*\d{3}[-.]?\d{4}\b/g, '[REDACTED_PHONE]');
-  
-  // SSN redaction
-  text = text.replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[REDACTED_SSN]');
-  
-  // Credit card redaction (basic pattern - does not validate Luhn checksum)
-  // Note: May have false positives with 16-digit sequences
-  text = text.replace(/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g, '[REDACTED_CC]');
-  
-  return text;
+  if (typeof text !== 'string' || !POLICY.redactPII) return text;
+
+  return text
+    .replace(PII_PATTERNS.email, '[redacted-email]')
+    .replace(PII_PATTERNS.phone, '[redacted-phone]')
+    .replace(PII_PATTERNS.ssn, '[redacted-ssn]')
+    .replace(PII_PATTERNS.creditCard, '[redacted-card]')
+    .replace(PII_PATTERNS.address, '[redacted-address]');
 }
 
-/**
- * Jailbreak Detection - Detect prompt injection attempts
- */
 function detectJailbreak(text) {
-  if (typeof text !== 'string') return false;
-  
-  const jailbreakPatterns = [
-    /ignore\s+(previous|all|above)\s+instructions?/i,
-    /disregard\s+(previous|all|above)\s+instructions?/i,
-    /forget\s+(previous|all|above)\s+instructions?/i,
-    /you\s+are\s+now\s+in\s+developer\s+mode/i,
-    /roleplay\s+as\s+an?\s+unrestricted/i,
-    /pretend\s+you\s+(have\s+)?no\s+restrictions/i,
-    /act\s+as\s+if\s+you\s+(have\s+)?no\s+limitations/i,
-  ];
-  
-  return jailbreakPatterns.some(pattern => pattern.test(text));
+  if (typeof text !== 'string' || !POLICY.detectJailbreak) return false;
+  return JAILBREAK_PATTERNS.some((pattern) => pattern.test(text));
 }
 
-/**
- * Topic Blocking - Block restricted topics
- */
-function checkBlockedTopics(text) {
-  if (typeof text !== 'string') return null;
-  
-  const blockedTopics = [
-    { pattern: /\b(how\s+to\s+make|create|build)\s+(bomb|explosive|weapon)\b/i, topic: 'dangerous_activities' },
-    { pattern: /\b(hack|crack|exploit|bypass)\s+(system|password|security)\b/i, topic: 'hacking' },
-  ];
-  
-  for (const blocked of blockedTopics) {
-    if (blocked.pattern.test(text)) {
-      return blocked.topic;
-    }
-  }
-  
-  return null;
+function checkBlockedTopic(text) {
+  if (typeof text !== 'string' || !POLICY.blockTopics) return null;
+  const match = BLOCKED_TOPIC_PATTERNS.find((entry) => entry.pattern.test(text));
+  return match ? match.topic : null;
 }
 
-/**
- * Math Corrections - Fix common math errors
- */
-function correctMath(text) {
+function correctSimpleMath(text) {
   if (typeof text !== 'string') return text;
-  
-  // Simple pattern matching for basic arithmetic (e.g., "2+2=5" -> "2+2=4")
-  const mathPattern = /(\d+)\s*\+\s*(\d+)\s*=\s*(\d+)/g;
-  
-  return text.replace(mathPattern, (match, a, b, result) => {
-    const numA = parseInt(a);
-    const numB = parseInt(b);
-    const numResult = parseInt(result);
-    const correctResult = numA + numB;
-    if (numResult !== correctResult) {
-      console.log(`[MATH_CORRECTION] ${a}+${b}=${result} corrected to ${a}+${b}=${correctResult}`);
-      return `${a}+${b}=${correctResult}`;
+
+  return text.replace(/\b(-?\d+)\s*([+\-*\/])\s*(-?\d+)\s*=\s*(-?\d+)\b/g, (match, left, operator, right, stated) => {
+    const a = Number(left);
+    const b = Number(right);
+    const claimed = Number(stated);
+    let actual;
+
+    if (operator === '+') actual = a + b;
+    if (operator === '-') actual = a - b;
+    if (operator === '*') actual = a * b;
+    if (operator === '/') {
+      if (b === 0) return match;
+      actual = a / b;
     }
+
+    if (!Number.isFinite(actual) || actual !== claimed) {
+      return `${a} ${operator} ${b} = ${actual}`;
+    }
+
     return match;
   });
 }
 
-/**
- * Process messages through safety layers
- */
+function sanitizeMessageContent(content) {
+  if (typeof content === 'string') {
+    return correctSimpleMath(redactPII(content));
+  }
+
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (part && typeof part === 'object' && typeof part.text === 'string') {
+        return { ...part, text: correctSimpleMath(redactPII(part.text)) };
+      }
+      return part;
+    });
+  }
+
+  return content;
+}
+
+function extractTextFromMessages(messages) {
+  if (!Array.isArray(messages)) return '';
+
+  return messages
+    .map((message) => {
+      if (!message) return '';
+      if (typeof message.content === 'string') return message.content;
+      if (Array.isArray(message.content)) {
+        return message.content
+          .map((part) => (part && typeof part.text === 'string' ? part.text : ''))
+          .join('\n');
+      }
+      return '';
+    })
+    .join('\n');
+}
+
+function evaluateInput(messages) {
+  const text = extractTextFromMessages(messages);
+  const blockedTopic = checkBlockedTopic(text);
+
+  return {
+    blocked: Boolean(blockedTopic || detectJailbreak(text)),
+    topic: blockedTopic,
+    jailbreak: detectJailbreak(text),
+    inputHash: sha256(text),
+    rawText: POLICY.storeRawText ? text : undefined,
+  };
+}
+
 function processMessages(messages) {
   if (!Array.isArray(messages)) return messages;
-  
-  return messages.map(msg => {
-    if (msg.content) {
-      // Check for jailbreak attempts
-      if (detectJailbreak(msg.content)) {
-        console.warn('[SECURITY] Jailbreak attempt detected and blocked');
-        throw new Error('Security violation: Jailbreak attempt detected');
-      }
-      
-      // Check for blocked topics
-      const blockedTopic = checkBlockedTopics(msg.content);
-      if (blockedTopic) {
-        console.warn(`[SECURITY] Blocked topic detected: ${blockedTopic}`);
-        throw new Error(`Content policy violation: Blocked topic (${blockedTopic})`);
-      }
-      
-      // Apply PII redaction
-      msg.content = redactPII(msg.content);
-      
-      // Apply math corrections
-      msg.content = correctMath(msg.content);
-    }
-    return msg;
-  });
+
+  return messages.map((message) => ({
+    ...message,
+    content: sanitizeMessageContent(message.content),
+  }));
 }
 
-/**
- * Proxy endpoint for chat completions
- */
-app.post('/v1/chat/completions', async (req, res) => {
-  try {
-    const requestBody = req.body;
-    
-    // Process messages through safety layers
-    if (requestBody.messages) {
-      requestBody.messages = processMessages(requestBody.messages);
-    }
-    
-    // Determine if streaming is requested
-    const isStreaming = requestBody.stream === true;
-    
-    // Forward request to target API
-    const targetUrl = new URL('/v1/chat/completions', TARGET_API);
-    const protocol = targetUrl.protocol === 'https:' ? https : http;
-    
-    const options = {
-      hostname: targetUrl.hostname,
-      port: targetUrl.port,
-      path: targetUrl.pathname,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': req.headers.authorization || ''
-      }
+function normalizePayload(body) {
+  const payload = body && typeof body === 'object' ? { ...body } : {};
+
+  if (!Array.isArray(payload.messages)) {
+    payload.messages = [{ role: 'user', content: String(payload.prompt || '') }];
+  }
+
+  if (typeof payload.temperature === 'number') {
+    payload.temperature = Math.min(payload.temperature, POLICY.maxTemperature);
+  }
+
+  payload.messages = processMessages(payload.messages);
+  return payload;
+}
+
+function auditLogger(logDir = DEFAULT_LOG_DIR) {
+  fs.mkdirSync(logDir, { recursive: true });
+  const logFile = path.join(logDir, 'trustlayer-audit.jsonl');
+
+  return function writeAudit(record) {
+    const safeRecord = {
+      ts: nowIso(),
+      version: VERSION,
+      ...record,
     };
-    
-    const proxyReq = protocol.request(options, (proxyRes) => {
-      // Set response headers
-      res.statusCode = proxyRes.statusCode;
-      Object.keys(proxyRes.headers).forEach(key => {
-        res.setHeader(key, proxyRes.headers[key]);
+    fs.appendFileSync(logFile, `${JSON.stringify(safeRecord)}\n`);
+  };
+}
+
+function buildTargetUrl(targetApi) {
+  const base = new URL(targetApi);
+  return new URL('/v1/chat/completions', `${base.protocol}//${base.host}`).toString();
+}
+
+async function proxyToUpstream(payload, headers, targetApi) {
+  const targetUrl = buildTargetUrl(targetApi);
+
+  const upstreamResponse = await fetch(targetUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: headers.authorization || '',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  return upstreamResponse;
+}
+
+function copyUpstreamHeaders(upstreamResponse, res) {
+  const allowedHeaders = ['content-type', 'cache-control'];
+  for (const header of allowedHeaders) {
+    const value = upstreamResponse.headers.get(header);
+    if (value) res.setHeader(header, value);
+  }
+}
+
+async function sendNonStreamingResponse(upstreamResponse, res) {
+  const text = await upstreamResponse.text();
+
+  try {
+    const json = JSON.parse(text);
+    if (Array.isArray(json.choices)) {
+      json.choices = json.choices.map((choice) => {
+        if (choice.message && typeof choice.message.content === 'string') {
+          return {
+            ...choice,
+            message: {
+              ...choice.message,
+              content: correctSimpleMath(redactPII(choice.message.content)),
+            },
+          };
+        }
+        return choice;
       });
-      
-      if (isStreaming) {
-        // SSE passthrough for streaming responses
-        console.log('[STREAM] Passing through SSE stream');
-        proxyRes.pipe(res);
-      } else {
-        // Buffer non-streaming responses
-        let data = '';
-        proxyRes.on('data', chunk => {
-          data += chunk;
-        });
-        
-        proxyRes.on('end', () => {
-          try {
-            const response = JSON.parse(data);
-            
-            // Process response messages
-            if (response.choices) {
-              response.choices = response.choices.map(choice => {
-                if (choice.message && choice.message.content) {
-                  choice.message.content = redactPII(choice.message.content);
-                  choice.message.content = correctMath(choice.message.content);
-                }
-                return choice;
-              });
-            }
-            
-            // Log deterministically
-            console.log(`[COMPLETION] Model: ${response.model}, Tokens: ${response.usage?.total_tokens || 'N/A'}`);
-            
-            res.json(response);
-          } catch (error) {
-            console.error('[ERROR] Failed to parse response:', error);
-            res.send(data);
-          }
-        });
-      }
-    });
-    
-    proxyReq.on('error', (error) => {
-      console.error('[ERROR] Proxy request failed:', error);
-      res.status(500).json({ error: 'Proxy request failed', details: error.message });
-    });
-    
-    // Send request body
-    proxyReq.write(JSON.stringify(requestBody));
-    proxyReq.end();
-    
-  } catch (error) {
-    console.error('[ERROR] Request processing failed:', error);
-    res.status(400).json({ error: error.message });
-  }
-});
-
-/**
- * Health check endpoint
- */
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'healthy',
-    version: '1.0.0',
-    features: [
-      'PII redaction',
-      'Jailbreak detection',
-      'Topic blocking',
-      'Math corrections',
-      'Deterministic logs',
-      'SSE passthrough'
-    ]
-  });
-});
-
-/**
- * Root endpoint
- */
-app.get('/', (req, res) => {
-  res.json({
-    name: 'TrustLayer',
-    description: 'Lightweight safety & compliance gateway for LLM chat completions APIs',
-    version: '1.0.0',
-    endpoints: {
-      '/v1/chat/completions': 'POST - Proxied chat completions with safety layers',
-      '/health': 'GET - Health check'
     }
-  });
-});
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`TrustLayer proxy server running on port ${PORT}`);
-  console.log(`Forwarding requests to: ${TARGET_API}`);
-  console.log('Features enabled: PII redaction, jailbreak detection, topic blocking, math corrections, deterministic logs, SSE passthrough');
-// TrustLayer — lightweight safety & compliance gateway for OpenAI-style /chat/completions APIs
-// MIT license — plug-and-play: just set OPENAI_BASE and run
-// Features: PII redaction, jailbreak/topic blocking, math correction, replay logs, SSE passthrough
-// Usage: OPENAI_BASE=http://localhost:8080/v1 node trustlayer.js
-// Then point clients to http://localhost:8787/v1/chat/completions
-
-import http from "http";
-import fs from "fs";
-import url from "url";
-import crypto from "crypto";
-
-const PORT = Number(process.env.PORT || 8787);
-const BASE = process.env.OPENAI_BASE || "http://localhost:8080/v1";
-const MODEL = process.env.MODEL || "Llama-3.2-1B-Instruct";
-const DATA_DIR = "./data";
-fs.mkdirSync(DATA_DIR, { recursive: true });
-const LOG_FILE = `${DATA_DIR}/trust_log.jsonl`;
-
-// ── Policy (edit these to match your needs) ──
-const POLICY = {
-  maxTemperature: 0.85,
-  redactPII: true,
-  blockTopics: [
-    "sexual.*(minor|child)", "child.*(porn|sex)", "minor.*sex",
-    "doxx|swatting", "make.*bomb", "build.*(weapon|explosive)",
-    "how to kill", "malware.*code", "ransomware", "credit.*card.*(generate|dump)",
-    "ssn.*fake", "suicide|self.?harm|harm.*self"
-  ],
-  detectJailbreak: true,
-  requireCitations: false,
-};
-
-// ── Helpers ──
-function runId()          { return crypto.randomBytes(12).toString("hex"); }
-function hash(s)          { return crypto.createHash("sha256").update(s).digest("hex"); }
-function now()            { return Date.now(); }
-function log(obj)         { fs.appendFileSync(LOG_FILE, JSON.stringify(obj) + "\n"); }
-function approxTokens(s)  { return Math.max(1, Math.ceil((s || "").length / 4)); }
-
-// Expanded PII patterns
-const PII_RX = {
-  email:    /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
-  phone:    /\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g,
-  ssn:      /\b\d{3}-\d{2}-\d{4}\b/g,
-  cc:       /\b(?:\d[ -]*?){13,19}\b/g,
-  address:  /\b\d{1,5}\s\w+\s(?:st|ave|rd|blvd|dr|ln|ct|pl|way|cir)\.?\b/gi,
-};
-
-// Jailbreak detection patterns
-const JAILBREAK_PATTERNS = [
-  "ignore previous", "disregard system", "forget all rules",
-  "new instructions", "you are now", "act as", " DAN ", "developer mode",
-  "jailbreak", "unrestricted", "uncensored", "no limits", "no ethical",
-  "bypass restriction", "reveal.*prompt", "show system", "anti-ai",
-  "evil mode", "hypothetical.*no rules", "base64 decode", "rot13"
-];
-
-function redactPII(text) {
-  return text
-    .replace(PII_RX.email,    "[redacted-email]")
-    .replace(PII_RX.phone,    "[redacted-phone]")
-    .replace(PII_RX.ssn,      "[redacted-ssn]")
-    .replace(PII_RX.cc,       "[redacted-card]")
-    .replace(PII_RX.address,  "[redacted-address]");
-}
-
-// Stronger jailbreak detection
-function isJailbreakAttempt(text) {
-  const lower = text.toLowerCase();
-  return JAILBREAK_PATTERNS.some(p => lower.includes(p));
-}
-
-// Topic violation check
-function violatesPolicy(text) {
-  const lower = text.toLowerCase();
-  return POLICY.blockTopics.some(pattern => new RegExp(pattern, "i").test(lower));
-}
-
-// Basic math correction for +, -, *, /
-function mathCorrection(text) {
-  const ops = [
-    { rx: /(\d+)\s*\+\s*(\d+)\s*=\s*(\d+)/, op: (a,b)=>a+b, sym:"+" },
-    { rx: /(\d+)\s*-\s*(\d+)\s*=\s*(\d+)/, op: (a,b)=>a-b, sym:"-" },
-    { rx: /(\d+)\s*\*\s*(\d+)\s*=\s*(\d+)/, op: (a,b)=>a*b, sym:"*" },
-    { rx: /(\d+)\s*\/\s*(\d+)\s*=\s*(\d+)/, op: (a,b)=>Math.floor(a/b), sym:"/" }
-  ];
-  for (const { rx, op, sym } of ops) {
-    const m = text.match(rx);
-    if (m) {
-      const a = +m[1], b = +m[2], c = +m[3];
-      const correct = op(a, b);
-      if (Math.abs(correct - c) > 0.001) {
-        return ` [Correction: ${a}${sym}${b}=${correct}, not ${c}]`;
-      }
-    }
-  }
-  return null;
-}
-
-// RAG citation nudge
-function citationNudge(payload, accumulated) {
-  if (!POLICY.requireCitations || !payload.meta?.rag) return null;
-  if (/\[[0-9]+\]|https?:\/\//.test(accumulated)) return null;
-  return " [Please include sources or citations for factual answers.]";
-}
-
-// Normalize incoming payload
-function normalize(body) {
-  let p;
-  try { p = JSON.parse(body || "{}"); } catch { throw new Error("invalid json"); }
-  p.model = p.model || MODEL;
-  if (typeof p.temperature === "number") p.temperature = Math.min(p.temperature, POLICY.maxTemperature);
-  p.stream = true;
-  if (p.seed == null) p.seed = Math.floor(Math.random() * 1e9);
-  if (!Array.isArray(p.messages)) p.messages = [{ role: "user", content: String(p.prompt || "") }];
-  return p;
-}
-
-// ── Server ──
-const server = http.createServer(async (req, res) => {
-  const { pathname } = url.parse(req.url, true);
-
-  if (req.method === "GET" && pathname === "/health") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", proxyTo: BASE, model: MODEL }));
-    return;
-  }
-
-  if (req.method !== "POST" || pathname !== "/v1/chat/completions") {
-    res.writeHead(404);
-    res.end("Not found");
-    return;
-  }
-
-  let body = "";
-  try {
-    body = await new Promise(r => { let d = ""; req.on("data", x => d += x); req.on("end", () => r(d)); });
+    res.status(upstreamResponse.status).json(json);
   } catch {
-    res.writeHead(400); res.end("bad request"); return;
+    res.status(upstreamResponse.status).send(redactPII(text));
   }
+}
 
-  const run = runId();
-  const t0 = now();
-  let payload;
-  try { payload = normalize(body); } catch (e) {
-    res.writeHead(400); res.end(e.message); return;
-  }
+async function pipeStreamingResponse(upstreamResponse, res) {
+  res.status(upstreamResponse.status);
+  res.setHeader('content-type', 'text/event-stream; charset=utf-8');
+  res.setHeader('cache-control', 'no-cache');
+  res.setHeader('connection', 'keep-alive');
 
-  const userContent = (payload.messages.find(m => m.role === "user") || {}).content || "";
-  const flagsIn = { jailbreak: false, topic: false };
-
-  if (POLICY.detectJailbreak && isJailbreakAttempt(userContent)) flagsIn.jailbreak = true;
-  if (violatesPolicy(userContent)) flagsIn.topic = true;
-
-  if (flagsIn.topic || flagsIn.jailbreak) {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive"
-    });
-    res.write(`data: Sorry, that request violates safety rules. Try something else!\n\n`);
-    res.write("data: [DONE]\n\n");
-    res.end();
-    log({ type: "blocked_input", run, ts: new Date().toISOString(), flags: flagsIn, input: userContent });
-    return;
-  }
-
-  let upstream;
-  try {
-    upstream = await fetch(`${BASE}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-  } catch {
-    res.writeHead(502); res.end("upstream error"); return;
-  }
-
-  if (!upstream.ok || !upstream.body) {
-    res.writeHead(upstream.status);
-    res.end(await upstream.text());
-    return;
-  }
-
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream; charset=utf-8",
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-    "X-Accel-Buffering": "no"
-  });
-
-  const reader = upstream.body.getReader();
+  const reader = upstreamResponse.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = "", fullResponse = "", ttft = null, tokenCount = 0;
-  const outFlags = { pii: false, jailbreak: false, topic: false, corrected: false, nudged: false };
+  let buffer = '';
 
-  const keepalive = setInterval(() => res.write(": keepalive\n\n"), 15000);
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
 
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split('\n\n');
+    buffer = events.pop() || '';
 
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() || "";
+    for (const event of events) {
+      const line = event.trim();
+      if (!line.startsWith('data: ')) {
+        res.write(`${event}\n\n`);
+        continue;
+      }
 
-      for (const part of parts) {
-        const line = part.trim();
-        if (!line.startsWith("data: ")) continue;
-        const data = line.slice(6).trim();
-        if (data === "[DONE]") continue;
+      const data = line.slice(6).trim();
+      if (data === '[DONE]') {
+        res.write('data: [DONE]\n\n');
+        continue;
+      }
 
-        let chunkObj;
-        try { chunkObj = JSON.parse(data); } catch { continue; }
-
-        let delta = (((chunkObj.choices || [])[0] || {}).delta || {}).content || "";
-        if (!delta) {
-          res.write(line + "\n\n");
-          continue;
+      try {
+        const chunk = JSON.parse(data);
+        const choice = chunk.choices && chunk.choices[0];
+        if (choice && choice.delta && typeof choice.delta.content === 'string') {
+          choice.delta.content = correctSimpleMath(redactPII(choice.delta.content));
         }
-
-        if (ttft === null) ttft = now() - t0;
-
-        // Apply transforms
-        if (POLICY.redactPII) {
-          const redacted = redactPII(delta);
-          if (redacted !== delta) { outFlags.pii = true; delta = redacted; }
-        }
-
-        if (POLICY.detectJailbreak && isJailbreakAttempt(delta)) {
-          outFlags.jailbreak = true;
-          delta = "";
-        }
-
-        if (violatesPolicy(delta)) {
-          outFlags.topic = true;
-          delta = "[blocked by policy]";
-        }
-
-        const correction = mathCorrection(delta);
-        if (correction) {
-          outFlags.corrected = true;
-          delta += correction;
-        }
-
-        fullResponse += delta;
-        tokenCount += approxTokens(delta);
-
-        // Patch and forward
-        const patched = { ...chunkObj };
-        if (!patched.choices) patched.choices = [{ delta: { content: delta } }];
-        else patched.choices[0].delta = { ...(patched.choices[0].delta || {}), content: delta };
-
-        res.write("data: " + JSON.stringify(patched) + "\n\n");
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      } catch {
+        res.write(`data: ${redactPII(data)}\n\n`);
       }
     }
-  } catch (err) {
-    console.error("Stream error:", err);
-    res.write(`data: [internal error]\n\n`);
-  } finally {
-    clearInterval(keepalive);
   }
 
-  // Final safety check on complete response
-  if (violatesPolicy(fullResponse) || isJailbreakAttempt(fullResponse)) {
-    outFlags.topic = true;
-    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "\n\n[Response blocked — violates safety policy]" } }] })}\n\n`);
-  }
-
-  // Citation nudge
-  const nudge = citationNudge(payload, fullResponse);
-  if (nudge) {
-    outFlags.nudged = true;
-    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: nudge } }] })}\n\n`);
-  }
-
-  res.write("data: [DONE]\n\n");
+  if (buffer) res.write(buffer);
   res.end();
+}
 
-  const duration = now() - t0;
-  const tps = tokenCount / Math.max(0.001, duration / 1000);
+function createApp(options = {}) {
+  const targetApi = options.targetApi || process.env.TARGET_API || process.env.OPENAI_BASE || DEFAULT_TARGET_API;
+  const writeAudit = options.writeAudit || auditLogger(options.logDir || process.env.TRUSTLAYER_LOG_DIR || DEFAULT_LOG_DIR);
+  const app = express();
 
-  log({
-    type: "completion",
-    run,
-    ts: new Date().toISOString(),
-    model: payload.model,
-    temperature: payload.temperature,
-    ttft_ms: ttft,
-    tokens_est: tokenCount,
-    tps_est: +tps.toFixed(2),
-    flags_input: flagsIn,
-    flags_output: outFlags,
-    input_hash: hash(JSON.stringify(payload.messages)),
-    output_hash: hash(fullResponse)
+  app.use(express.json({ limit: process.env.TRUSTLAYER_JSON_LIMIT || '2mb' }));
+
+  app.get('/', (_req, res) => {
+    res.json({
+      name: 'TrustLayer',
+      version: VERSION,
+      description: 'Lightweight safety gateway for OpenAI-compatible chat completions APIs.',
+      endpoints: {
+        health: 'GET /health',
+        chatCompletions: 'POST /v1/chat/completions',
+      },
+      targetApi,
+      policy: POLICY,
+    });
   });
-});
 
-server.listen(PORT, () => {
-  console.log(`TrustLayer running on http://localhost:${PORT}`);
-  console.log(`Proxying → ${BASE}   |   Model: ${MODEL}   |   Logs: ${LOG_FILE}`);
-});
+  app.get('/health', (_req, res) => {
+    res.json({ status: 'ok', version: VERSION, targetApi });
+  });
+
+  app.post('/v1/chat/completions', async (req, res) => {
+    const runId = createRunId();
+    const started = Date.now();
+
+    try {
+      const originalMessages = Array.isArray(req.body.messages) ? req.body.messages : [];
+      const evaluation = evaluateInput(originalMessages);
+
+      if (evaluation.blocked) {
+        writeAudit({
+          type: 'blocked_input',
+          runId,
+          topic: evaluation.topic,
+          jailbreak: evaluation.jailbreak,
+          inputHash: evaluation.inputHash,
+          rawText: evaluation.rawText,
+          durationMs: Date.now() - started,
+        });
+
+        return res.status(400).json({
+          error: {
+            message: 'Request blocked by TrustLayer safety policy.',
+            topic: evaluation.topic,
+            jailbreak: evaluation.jailbreak,
+          },
+        });
+      }
+
+      const payload = normalizePayload(req.body);
+      const upstreamResponse = await proxyToUpstream(payload, req.headers, targetApi);
+
+      writeAudit({
+        type: 'completion',
+        runId,
+        status: upstreamResponse.status,
+        stream: payload.stream === true,
+        inputHash: evaluation.inputHash,
+        durationMs: Date.now() - started,
+      });
+
+      copyUpstreamHeaders(upstreamResponse, res);
+
+      if (payload.stream === true && upstreamResponse.body) {
+        return pipeStreamingResponse(upstreamResponse, res);
+      }
+
+      return sendNonStreamingResponse(upstreamResponse, res);
+    } catch (error) {
+      writeAudit({
+        type: 'error',
+        runId,
+        message: error.message,
+        durationMs: Date.now() - started,
+      });
+
+      return res.status(502).json({
+        error: {
+          message: 'TrustLayer failed to process the request.',
+          detail: error.message,
+        },
+      });
+    }
+  });
+
+  return app;
+}
+
+function startServer() {
+  const port = Number(process.env.PORT || DEFAULT_PORT);
+  const app = createApp();
+
+  app.listen(port, () => {
+    console.log(`TrustLayer v${VERSION} running on http://localhost:${port}`);
+    console.log(`Forwarding to: ${process.env.TARGET_API || process.env.OPENAI_BASE || DEFAULT_TARGET_API}`);
+    console.log('Audit logs: ./data/trustlayer-audit.jsonl');
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  VERSION,
+  POLICY,
+  createApp,
+  redactPII,
+  detectJailbreak,
+  checkBlockedTopic,
+  correctSimpleMath,
+  processMessages,
+  normalizePayload,
+  evaluateInput,
+};

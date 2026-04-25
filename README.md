@@ -1,70 +1,72 @@
 # TrustLayer
 
-**A lightweight LLM safety gateway for privacy-aware chat-completion apps.**
+**Lightweight LLM safety and privacy gateway for OpenAI-compatible applications.**
 
-TrustLayer is a Michigan MindMend Inc. prototype that sits between an application and an OpenAI-style `/v1/chat/completions` endpoint. It demonstrates practical safety middleware for LLM systems: PII redaction, jailbreak/prompt-injection detection, topic blocking, streaming passthrough, and deterministic audit logging.
+TrustLayer is a Node.js proxy that sits between an app and any OpenAI-compatible `/v1/chat/completions` endpoint, including local model servers. It demonstrates practical AI safety infrastructure: PII redaction, jailbreak / prompt-injection detection, topic blocking, streaming passthrough, and deterministic audit logging.
 
-This repo is built as a portfolio-quality example of **AI safety engineering**, **privacy-first product thinking**, and **local/edge-friendly LLM infrastructure**.
+Built by **Michigan MindMend Inc.** as a portfolio demonstration of hands-on, privacy-first AI safety engineering.
+
+[![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933)](package.json)
+[![CI](https://github.com/MiMindMendinc/TrustLayer/actions/workflows/ci.yml/badge.svg)](https://github.com/MiMindMendinc/TrustLayer/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/Tests-node%20--test-brightgreen)](test/trustlayer.test.js)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![Status](https://img.shields.io/badge/Status-Prototype-blue)](#current-status)
 
 ---
 
-## Why it matters
+## Problem
 
-LLM apps should not send sensitive user data straight to a model provider without a safety layer. TrustLayer explores a simple pattern:
+LLM apps often send sensitive user text directly to a model provider. That creates risk when prompts contain emails, phone numbers, family details, credentials, crisis language, or instructions designed to bypass policy.
+
+Teams need a small, understandable safety layer they can inspect, run locally, and adapt before traffic reaches a model.
+
+## Solution
+
+TrustLayer adds a policy gateway in front of the model:
 
 ```text
-App → TrustLayer safety gateway → LLM provider or local model server → TrustLayer response checks → App
+App
+  → TrustLayer input checks
+  → OpenAI-compatible provider or local model server
+  → TrustLayer response checks
+  → App
 ```
 
-The goal is not to replace full enterprise security review. The goal is to show how a small, understandable gateway can reduce risk before and after model calls.
+The goal is not corporate theater or unverifiable magic. The goal is direct, testable, practical risk reduction.
 
 ---
 
-## What it does
+## Key Features
 
-- **PII redaction** for common sensitive data patterns such as emails, phone numbers, SSNs, cards, and addresses.
-- **Jailbreak / prompt-injection detection** using configurable pattern checks.
-- **Topic blocking** for restricted or high-risk request categories.
-- **Streaming support** through Server-Sent Events passthrough.
-- **Audit logging** with hashed request/response records for reproducibility and debugging.
-- **OpenAI-style endpoint compatibility** for apps that already call `/v1/chat/completions`.
-- **Local-model friendly design** through configurable upstream base URLs.
+- **PII redaction** — common emails, phone numbers, SSNs, cards, addresses, and configurable patterns.
+- **Jailbreak / prompt-injection detection** — rule-based checks for obvious bypass attempts.
+- **Topic / content blocking** — configurable restricted categories for high-risk requests.
+- **Streaming support** — Server-Sent Events passthrough for chat UI compatibility.
+- **Deterministic audit logging** — hashed JSONL records for debugging and reproducibility.
+- **OpenAI-compatible API** — designed around `/v1/chat/completions` style requests.
+- **Local / edge friendly** — can point at local model gateways such as Ollama, LiteLLM, or vLLM when configured.
 
 ---
 
-## Tech stack
+## Tech Stack
 
-- Node.js
-- HTTP proxy / middleware pattern
+- Node.js 18+
+- Express-style HTTP proxy pattern
 - OpenAI-compatible chat-completions routing
 - JSONL audit logs
-- Regex-based policy checks
-- Streaming response handling
+- Regex / rule-based safety checks
+- Native Node test runner: `node --test`
+- GitHub Actions CI
 
 ---
 
-## Current status
-
-**Active prototype / portfolio project.**
-
-This repository demonstrates the architecture and safety ideas, but it is not yet a hardened production package. The next cleanup pass should separate the experimental proxy paths into modules, add automated tests, and standardize the runtime style.
-
-Known engineering cleanup targets:
-
-- Split policy, redaction, logging, and proxy code into separate files.
-- Choose one runtime style and keep it consistent across the codebase.
-- Add unit tests for PII redaction, topic blocking, jailbreak detection, and streaming behavior.
-- Add example configs for OpenAI-compatible local servers such as Ollama/LiteLLM/vLLM.
-- Add Docker support and a simple demo app.
-
----
-
-## Quick start
+## Quick Demo / How To Try It
 
 ```bash
 git clone https://github.com/MiMindMendinc/TrustLayer.git
 cd TrustLayer
-npm install
+npm ci
+npm test
 npm start
 ```
 
@@ -80,7 +82,7 @@ Health check:
 curl http://localhost:3000/health
 ```
 
-Example request:
+Example request with PII redaction path:
 
 ```bash
 curl -X POST http://localhost:3000/v1/chat/completions \
@@ -89,51 +91,109 @@ curl -X POST http://localhost:3000/v1/chat/completions \
   -d '{
     "model": "gpt-4o-mini",
     "messages": [
-      {"role": "user", "content": "My email is test@example.com. Summarize this safely."}
+      {"role": "user", "content": "My email is person@example.com. Summarize this safely."}
     ]
   }'
 ```
 
 ---
 
-## What I built / modified
+## Screenshots / Demo Placeholders
 
-This project shows hands-on work in:
+Add these assets next for sponsor/recruiter polish:
 
-- LLM middleware design
-- privacy and safety filters
-- API gateway routing
-- streaming response handling
-- deterministic logging concepts
-- safety-first product documentation
+| Asset | File Path | Purpose |
+|---|---|---|
+| Terminal test screenshot | `docs/assets/trustlayer-tests.png` | Shows `npm test` passing |
+| Health check screenshot | `docs/assets/trustlayer-health.png` | Shows local API running |
+| Redaction demo GIF | `docs/assets/trustlayer-redaction-demo.gif` | Shows PII redaction behavior |
+| Architecture card | `docs/assets/trustlayer-architecture.png` | Explains the gateway visually |
+
+Suggested README image block after assets exist:
+
+```md
+![TrustLayer test run](docs/assets/trustlayer-tests.png)
+![TrustLayer architecture](docs/assets/trustlayer-architecture.png)
+```
 
 ---
 
-## Recruiter notes
+## Tests & CI
 
-TrustLayer is the clearest example of my work in **LLM safety infrastructure**. It connects directly to roles involving AI safety, trust and safety automation, LLM evaluation, privacy engineering, AI product prototyping, and responsible AI systems.
+Run tests locally:
+
+```bash
+npm test
+```
+
+CI runs on pushes and pull requests using `.github/workflows/ci.yml`.
+
+Current tested areas:
+
+- PII redaction
+- jailbreak / prompt-injection detection
+- blocked-topic detection
+- basic math correction utility
+- payload normalization
+- input safety evaluation
+
+---
+
+## Privacy & Safety Commitments
+
+TrustLayer is designed around these commitments:
+
+- **Minimize exposure** before text reaches a model.
+- **Keep policy behavior inspectable** instead of hidden behind vague claims.
+- **Support local / on-prem deployment** where teams need tighter control.
+- **Log deterministically for debugging** while avoiding raw sensitive data where possible.
+- **Stay honest about limits**: rule-based checks reduce risk but do not guarantee complete safety.
+
+---
+
+## What TrustLayer Does Not Claim
+
+TrustLayer does **not** currently claim:
+
+- HIPAA compliance
+- clinical validation
+- production security certification
+- perfect PII detection
+- perfect jailbreak prevention
+- guaranteed zero data egress in every deployment
+
+Any use with regulated, youth, medical, legal, or high-risk data needs professional security, privacy, legal, and safety review.
+
+---
+
+## Current Status
+
+**Active prototype / portfolio project.**
+
+TrustLayer is built to show practical AI safety engineering and privacy-first product thinking. It is suitable as a recruiter/sponsor demo and starting point for deeper hardening.
 
 ---
 
 ## Roadmap
 
-- [ ] Modularize the gateway internals
-- [ ] Add Jest or Node test runner coverage
-- [ ] Add Dockerfile and compose example
-- [ ] Add local model examples
-- [ ] Add policy configuration file
-- [ ] Add benchmark and latency notes
-- [ ] Add screenshots / demo video
+- [ ] Add Dockerfile and docker-compose example
+- [ ] Add modular policy config file
+- [ ] Expand test coverage for streaming behavior
+- [ ] Add local model examples for Ollama / LiteLLM / vLLM
+- [ ] Add latency benchmark notes with reproducible setup
+- [ ] Add screenshots and short demo video
+- [ ] Split policy, redaction, logging, and proxy internals into modules
 
 ---
 
-## Built by
+## Built By
 
 **Lyle Perrien II**  
 Founder, **Michigan MindMend Inc.**  
-Owosso, Michigan
+Owosso, Michigan  
+X: [@p_perrien](https://x.com/p_perrien)
 
-Building privacy-first, offline-first AI tools for youth safety, family wellness, and responsible local automation.
+Building privacy-first, offline-capable AI safety tools for kids, families, and communities.
 
 ## License
 

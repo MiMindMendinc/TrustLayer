@@ -1,44 +1,71 @@
 # Security Policy
 
+TrustLayer is a prototype / portfolio project for practical LLM safety and privacy middleware. It is designed to demonstrate risk-reduction patterns, not to certify production security by itself.
+
+## Supported Status
+
+Current status: **active prototype**.
+
+Security reports are welcome for the current `main` branch.
+
 ## Reporting a Vulnerability
 
-We take the security of `TrustLayer` seriously. If you discover a security vulnerability within this project, we encourage you to report it to us as quickly as possible. We are committed to addressing all legitimate security concerns.
+Please report security concerns privately by email:
 
-**Please DO NOT open a public GitHub issue for security vulnerabilities.** Public disclosure can put the entire community at risk.
+**michiganmindmendinc@proton.me**
 
-Instead, please report vulnerabilities by sending an email to [INSERT SECURITY CONTACT EMAIL HERE, e.g., security@mimindmend.com].
+Please include:
 
-In your report, please include:
+- affected file or component
+- steps to reproduce
+- expected behavior
+- actual behavior
+- potential impact
+- suggested fix, if known
 
--   A clear and concise description of the vulnerability.
--   Steps to reproduce the vulnerability.
--   The potential impact of the vulnerability.
--   Any proof-of-concept code or exploits.
--   Your contact information (optional, but helpful for follow-up).
+Please do not publicly disclose exploitable issues until there has been reasonable time to review and respond.
 
-## Our Commitment
+## Scope
 
-Upon receiving a security report, we will:
+In scope:
 
-1.  Acknowledge receipt of your report within 48 hours.
-2.  Investigate the reported vulnerability promptly.
-3.  Keep you informed of our progress in addressing the vulnerability.
-4.  Notify you when the vulnerability has been patched and deployed.
-5.  Publicly acknowledge your contribution (if you wish) in our release notes or security advisories.
+- PII redaction bypasses
+- prompt-injection / jailbreak filter bypasses
+- unsafe logging of sensitive content
+- request/response handling bugs
+- dependency or configuration risks
+- issues that could expose secrets, tokens, or user data
 
-## Supported Versions
+Out of scope:
 
-The following versions of `TrustLayer` are currently supported for security updates:
+- social engineering
+- denial-of-service against public infrastructure not controlled by this project
+- reports without reproducible impact
+- claims that require production certification unless tied to repo code
 
-| Version | Supported |
-| :------ | :-------- |
-| `main`  | ✅ Yes    |
-| `v1.0.x`| ✅ Yes    |
+## Security Boundaries
 
-We encourage all users to stay updated with the latest versions to ensure they benefit from the most recent security patches.
+TrustLayer does not currently claim:
 
-## Responsible Disclosure
+- HIPAA compliance
+- clinical validation
+- production security certification
+- perfect PII detection
+- perfect jailbreak prevention
+- guaranteed zero data egress in every deployment
 
-We believe in responsible disclosure and appreciate your efforts to responsibly disclose vulnerabilities. We kindly request that you do not disclose any vulnerability publicly until we have had a reasonable opportunity to investigate and address it.
+Any use with regulated, youth, medical, legal, financial, or other sensitive data requires professional security, privacy, legal, and compliance review.
 
-Thank you for helping to keep `TrustLayer` secure!
+## Dependency Hygiene
+
+Recommended maintainer checks before release:
+
+```bash
+npm ci
+npm audit
+npm test
+```
+
+## Responsible Use
+
+TrustLayer is meant to reduce risk before and after model calls. It should be used as one layer in a broader safety system, not as the only control for high-risk deployments.

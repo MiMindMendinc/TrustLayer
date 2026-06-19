@@ -96,25 +96,6 @@ curl -X POST http://localhost:3000/v1/chat/completions \
   }'
 ```
 
----
-
-## Screenshots / Demo Placeholders
-
-Add these assets next for sponsor/recruiter polish:
-
-| Asset | File Path | Purpose |
-|---|---|---|
-| Terminal test screenshot | `docs/assets/trustlayer-tests.png` | Shows `npm test` passing |
-| Health check screenshot | `docs/assets/trustlayer-health.png` | Shows local API running |
-| Redaction demo GIF | `docs/assets/trustlayer-redaction-demo.gif` | Shows PII redaction behavior |
-| Architecture card | `docs/assets/trustlayer-architecture.png` | Explains the gateway visually |
-
-Suggested README image block after assets exist:
-
-```md
-![TrustLayer test run](docs/assets/trustlayer-tests.png)
-![TrustLayer architecture](docs/assets/trustlayer-architecture.png)
-```
 
 ---
 

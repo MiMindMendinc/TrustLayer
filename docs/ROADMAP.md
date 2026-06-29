@@ -5,7 +5,7 @@ TrustLayer is being hardened from a practical prototype into a cleaner local-fir
 ## Near-Term
 
 - [ ] Add Dockerfile and docker-compose example
-- [ ] Add `.env.example` with safe placeholder values
+- [x] Add `.env.example` with safe placeholder values
 - [ ] Add modular policy configuration
 - [ ] Add demo GIF showing PII redaction
 - [ ] Add architecture diagram

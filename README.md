@@ -99,6 +99,45 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 
 ---
 
+## Configuration
+
+TrustLayer is configured entirely through environment variables. All are optional; the defaults below apply when a variable is unset. A ready-to-copy template is provided in [`.env.example`](.env.example).
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `3000` | HTTP port TrustLayer listens on. |
+| `TARGET_API` | `https://api.openai.com` | Upstream OpenAI-compatible base URL. The host is used and `/v1/chat/completions` is appended automatically. |
+| `OPENAI_BASE` | — | Accepted as an alias for `TARGET_API`. |
+| `TRUSTLAYER_MAX_TEMPERATURE` | `0.85` | Requested `temperature` values above this are capped. |
+| `TRUSTLAYER_REDACT_PII` | `true` | Set to `false` to disable PII redaction. |
+| `TRUSTLAYER_BLOCK_TOPICS` | `true` | Set to `false` to disable restricted-topic blocking. |
+| `TRUSTLAYER_DETECT_JAILBREAK` | `true` | Set to `false` to disable jailbreak / prompt-injection detection. |
+| `TRUSTLAYER_STORE_RAW_TEXT` | `false` | Set to `true` to store raw input text in audit logs. Otherwise only a SHA-256 hash is stored. |
+| `TRUSTLAYER_LOG_DIR` | `./data` | Directory for JSONL audit logs (created if missing). |
+| `TRUSTLAYER_JSON_LIMIT` | `2mb` | Maximum accepted JSON request body size. |
+
+The upstream API key is not read from the environment; it is forwarded from the incoming request's `Authorization` header (for example, `Authorization: Bearer YOUR_API_KEY`).
+
+To point TrustLayer at a local model gateway:
+
+```bash
+TARGET_API=http://localhost:11434 npm start
+```
+
+---
+
+## Documentation
+
+Deeper context for reviewers and contributors lives in [`docs/`](docs/):
+
+- [Status](docs/STATUS.md) — what works today and what is explicitly not claimed.
+- [Threat Model](docs/THREAT_MODEL.md) — assets, trust boundaries, and hardening backlog.
+- [Privacy & Safety Notes](docs/PRIVACY_AND_SAFETY.md) — privacy principles and a deployment checklist.
+- [Reviewer Guide](docs/REVIEWER_GUIDE.md) — how to evaluate the project quickly.
+- [Roadmap](docs/ROADMAP.md) — near-term and hardening plans.
+
+---
+
 ## Tests & CI
 
 Run tests locally:

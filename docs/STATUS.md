@@ -41,12 +41,12 @@ TrustLayer does not currently claim:
 
 ## Release Readiness Checklist
 
-- [ ] `npm ci` passes
-- [ ] `npm test` passes
-- [ ] `npm audit` reviewed
+- [x] `npm ci` passes
+- [x] `npm test` passes
+- [x] `npm audit` reviewed
 - [ ] Dockerfile added
-- [ ] example `.env.example` added or verified
-- [ ] policy config documented
+- [x] example `.env.example` added or verified
+- [x] policy config documented
 - [ ] screenshots or demo GIF added
 - [ ] architecture diagram added
 - [ ] threat model reviewed

@@ -210,7 +210,7 @@ TrustLayer is built to show practical AI safety engineering and privacy-first pr
 
 **Lyle Perrien II**  
 Founder, **Michigan MindMend Inc.**  
-Owosso, Michigan  
+Michigan  
 X: [@p_perrien](https://x.com/p_perrien)
 
 Building privacy-first, offline-capable AI safety tools for kids, families, and communities.

@@ -18,6 +18,6 @@ Phase 2 underway: production hardening, demo proof, and partner pilots.
 
 Lyle Perrien II (@p_perrien)  
 michiganmindmendinc@proton.me  
-Owosso, Michigan
+Michigan
 
 https://github.com/MiMindMendinc

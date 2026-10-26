@@ -4,13 +4,11 @@
 
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933)](package.json)
 [![CI](https://github.com/MiMindMendinc/TrustLayer/actions/workflows/ci.yml/badge.svg)](https://github.com/MiMindMendinc/TrustLayer/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/Tests-node%20--test-brightgreen)](test/trustlayer.test.js)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Prototype-blue)](#project-status)
 
 TrustLayer is a small Node.js proxy that sits between an app and any OpenAI-compatible `/v1/chat/completions` endpoint, including local model servers. Before a prompt leaves your network it redacts common PII, blocks obvious prompt-injection attempts and a fixed set of high-risk topics, and caps temperature. On the way back it applies the same redaction to the model's reply (including streamed chunks) and writes a JSONL audit record that stores a SHA-256 hash of the input instead of the raw text. The whole gateway is one readable file, [`trustlayer.js`](trustlayer.js), so a reviewer can audit every rule.
 
-Built by **Michigan MindMend Inc.** as a portfolio demonstration of hands-on, privacy-first AI safety engineering.
+Built by **Michigan MindMend Inc.** as a demonstration of hands-on, privacy-first AI safety engineering.
 
 ---
 
@@ -25,13 +23,11 @@ Teams need a small, understandable safety layer they can inspect, run locally, a
 ```text
 App
   → TrustLayer input checks   (block jailbreak / restricted topic → HTTP 400 + audit record)
-  → PII redaction + temperature cap
+  → PII redaction + arithmetic correction + temperature cap
   → OpenAI-compatible provider or local model server
-  → TrustLayer response checks (PII redaction on JSON or SSE chunks)
+  → TrustLayer response checks (PII redaction + arithmetic correction on JSON or SSE chunks)
   → App
 ```
-
-The goal is not corporate theater or unverifiable magic. The goal is direct, testable, practical risk reduction.
 
 ---
 
@@ -41,12 +37,13 @@ The goal is not corporate theater or unverifiable magic. The goal is direct, tes
 - **Jailbreak / prompt-injection detection** — rule-based checks for common bypass phrasing ("ignore previous instructions", "reveal the system prompt", "developer mode", and similar).
 - **Restricted-topic blocking** — built-in categories: `dangerous_weapons`, `credential_abuse`, `malware`, and `doxxing`. Blocked requests return HTTP 400 and are never forwarded.
 - **Temperature cap** — requested `temperature` values above the configured maximum are lowered.
+- **Arithmetic correction** — `correctSimpleMath` finds simple integer statements of the form `a + b = c` (also `-`, `*`, `/`) and, when the stated result is wrong, rewrites it with the computed result (for example `2 + 2 = 5` becomes `2 + 2 = 4`). It runs on request messages and on model replies, including each streamed chunk. Division by zero is left unchanged. **It is always on in v1.1.0:** there is no environment variable to disable it, and it still runs when PII redaction is turned off.
 - **Streaming support** — Server-Sent Events passthrough, with redaction applied chunk by chunk.
 - **Deterministic audit logging** — JSONL records in `./data/trustlayer-audit.jsonl` with run ID, outcome, duration, and a SHA-256 input hash. Raw text is stored only if you opt in.
 - **OpenAI-compatible API** — accepts `/v1/chat/completions` requests and forwards the caller's `Authorization` header upstream.
 - **Local / edge friendly** — point `TARGET_API` at a local OpenAI-compatible server (for example Ollama on port 11434).
 
-Each safety check can be switched on or off with an environment variable (see [Configuration](#configuration)). The rule lists themselves live in `trustlayer.js`; there is no separate policy file yet.
+PII redaction, topic blocking, and jailbreak detection can each be switched on or off with an environment variable (see [Configuration](#configuration)). The rule lists themselves live in `trustlayer.js`; there is no separate policy file yet.
 
 ## Endpoints
 
@@ -157,7 +154,7 @@ Currently tested areas:
 - PII redaction
 - jailbreak / prompt-injection detection
 - blocked-topic detection
-- basic math correction utility
+- arithmetic correction utility
 - payload normalization
 - input safety evaluation
 
@@ -175,34 +172,9 @@ Deeper context for reviewers and contributors lives in [`docs/`](docs/):
 
 ---
 
-## Privacy & safety commitments
+## Status and limits
 
-- **Minimize exposure** before text reaches a model.
-- **Keep policy behavior inspectable** instead of hidden behind vague claims.
-- **Support local / on-prem deployment** where teams need tighter control.
-- **Log deterministically for debugging** while avoiding raw sensitive data where possible.
-- **Stay honest about limits**: rule-based checks reduce risk but do not guarantee complete safety.
-
-## What TrustLayer does not claim
-
-TrustLayer does **not** currently claim:
-
-- HIPAA compliance
-- clinical validation
-- production security certification
-- perfect PII detection
-- perfect jailbreak prevention
-- guaranteed zero data egress in every deployment
-
-Any use with regulated, youth, medical, legal, or high-risk data needs professional security, privacy, legal, and safety review.
-
----
-
-## Project status
-
-**Active prototype / portfolio project (v1.1.0).**
-
-TrustLayer is built to show practical AI safety engineering and privacy-first product thinking. It is suitable as a demo and as a starting point for deeper hardening.
+**Prototype, v1.1.0.** The checks are regex and rule based: they reduce risk but do not guarantee complete PII detection or jailbreak prevention, and they are not a substitute for a security, privacy, or legal review. TrustLayer makes no HIPAA, clinical, or production-security certification claims, and does not guarantee zero data egress in every deployment. Use with regulated, youth, medical, or other high-risk data needs professional review first.
 
 ## Roadmap
 
@@ -222,8 +194,6 @@ TrustLayer is built to show practical AI safety engineering and privacy-first pr
 Founder, **Michigan MindMend Inc.**  
 Michigan  
 X: [@p_perrien](https://x.com/p_perrien)
-
-Building privacy-first, offline-capable AI safety tools for kids, families, and communities.
 
 ## License
 

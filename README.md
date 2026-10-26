@@ -2,15 +2,15 @@
 
 **Lightweight LLM safety and privacy gateway for OpenAI-compatible applications.**
 
-TrustLayer is a Node.js proxy that sits between an app and any OpenAI-compatible `/v1/chat/completions` endpoint, including local model servers. It demonstrates practical AI safety infrastructure: PII redaction, jailbreak / prompt-injection detection, topic blocking, streaming passthrough, and deterministic audit logging.
-
-Built by **Michigan MindMend Inc.** as a portfolio demonstration of hands-on, privacy-first AI safety engineering.
-
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933)](package.json)
 [![CI](https://github.com/MiMindMendinc/TrustLayer/actions/workflows/ci.yml/badge.svg)](https://github.com/MiMindMendinc/TrustLayer/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/Tests-node%20--test-brightgreen)](test/trustlayer.test.js)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Prototype-blue)](#current-status)
+[![Status](https://img.shields.io/badge/Status-Prototype-blue)](#project-status)
+
+TrustLayer is a small Node.js proxy that sits between an app and any OpenAI-compatible `/v1/chat/completions` endpoint, including local model servers. Before a prompt leaves your network it redacts common PII, blocks obvious prompt-injection attempts and a fixed set of high-risk topics, and caps temperature. On the way back it applies the same redaction to the model's reply (including streamed chunks) and writes a JSONL audit record that stores a SHA-256 hash of the input instead of the raw text. The whole gateway is one readable file, [`trustlayer.js`](trustlayer.js), so a reviewer can audit every rule.
+
+Built by **Michigan MindMend Inc.** as a portfolio demonstration of hands-on, privacy-first AI safety engineering.
 
 ---
 
@@ -20,15 +20,14 @@ LLM apps often send sensitive user text directly to a model provider. That creat
 
 Teams need a small, understandable safety layer they can inspect, run locally, and adapt before traffic reaches a model.
 
-## Solution
-
-TrustLayer adds a policy gateway in front of the model:
+## How it works
 
 ```text
 App
-  → TrustLayer input checks
+  → TrustLayer input checks   (block jailbreak / restricted topic → HTTP 400 + audit record)
+  → PII redaction + temperature cap
   → OpenAI-compatible provider or local model server
-  → TrustLayer response checks
+  → TrustLayer response checks (PII redaction on JSON or SSE chunks)
   → App
 ```
 
@@ -36,31 +35,49 @@ The goal is not corporate theater or unverifiable magic. The goal is direct, tes
 
 ---
 
-## Key Features
+## Key features
 
-- **PII redaction** — common emails, phone numbers, SSNs, cards, addresses, and configurable patterns.
-- **Jailbreak / prompt-injection detection** — rule-based checks for obvious bypass attempts.
-- **Topic / content blocking** — configurable restricted categories for high-risk requests.
-- **Streaming support** — Server-Sent Events passthrough for chat UI compatibility.
-- **Deterministic audit logging** — hashed JSONL records for debugging and reproducibility.
-- **OpenAI-compatible API** — designed around `/v1/chat/completions` style requests.
-- **Local / edge friendly** — can point at local model gateways such as Ollama, LiteLLM, or vLLM when configured.
+- **PII redaction** — regex rules for emails, phone numbers, SSNs, card-like digit runs, and street addresses, replaced with tags such as `[redacted-email]`. Applied to requests and to responses.
+- **Jailbreak / prompt-injection detection** — rule-based checks for common bypass phrasing ("ignore previous instructions", "reveal the system prompt", "developer mode", and similar).
+- **Restricted-topic blocking** — built-in categories: `dangerous_weapons`, `credential_abuse`, `malware`, and `doxxing`. Blocked requests return HTTP 400 and are never forwarded.
+- **Temperature cap** — requested `temperature` values above the configured maximum are lowered.
+- **Streaming support** — Server-Sent Events passthrough, with redaction applied chunk by chunk.
+- **Deterministic audit logging** — JSONL records in `./data/trustlayer-audit.jsonl` with run ID, outcome, duration, and a SHA-256 input hash. Raw text is stored only if you opt in.
+- **OpenAI-compatible API** — accepts `/v1/chat/completions` requests and forwards the caller's `Authorization` header upstream.
+- **Local / edge friendly** — point `TARGET_API` at a local OpenAI-compatible server (for example Ollama on port 11434).
+
+Each safety check can be switched on or off with an environment variable (see [Configuration](#configuration)). The rule lists themselves live in `trustlayer.js`; there is no separate policy file yet.
+
+## Endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/` | Name, version, target API, and active policy flags |
+| `GET` | `/health` | Health check |
+| `POST` | `/v1/chat/completions` | Safety-checked proxy to the upstream model |
 
 ---
 
-## Tech Stack
+## Tech stack
 
-- Node.js 18+
-- Express-style HTTP proxy pattern
-- OpenAI-compatible chat-completions routing
-- JSONL audit logs
-- Regex / rule-based safety checks
-- Native Node test runner: `node --test`
+- Node.js 18+ (uses the built-in `fetch`)
+- [Express 4](https://expressjs.com/) — the only runtime dependency
+- Node's built-in `crypto` for SHA-256 audit hashes
+- Native Node test runner (`node --test`)
 - GitHub Actions CI
 
+## Project layout
+
+```text
+trustlayer.js            # the gateway: policy rules, redaction, proxy, audit log
+test/trustlayer.test.js  # unit tests (node --test)
+.env.example             # configuration template
+docs/                    # status, threat model, privacy notes, reviewer guide, roadmap
+```
+
 ---
 
-## Quick Demo / How To Try It
+## Quick start
 
 ```bash
 git clone https://github.com/MiMindMendinc/TrustLayer.git
@@ -82,7 +99,7 @@ Health check:
 curl http://localhost:3000/health
 ```
 
-Example request with PII redaction path:
+Example request that exercises the PII redaction path:
 
 ```bash
 curl -X POST http://localhost:3000/v1/chat/completions \
@@ -95,7 +112,6 @@ curl -X POST http://localhost:3000/v1/chat/completions \
     ]
   }'
 ```
-
 
 ---
 
@@ -126,6 +142,27 @@ TARGET_API=http://localhost:11434 npm start
 
 ---
 
+## Tests & CI
+
+Run tests locally:
+
+```bash
+npm test
+```
+
+CI runs on pushes and pull requests using `.github/workflows/ci.yml`.
+
+Currently tested areas:
+
+- PII redaction
+- jailbreak / prompt-injection detection
+- blocked-topic detection
+- basic math correction utility
+- payload normalization
+- input safety evaluation
+
+---
+
 ## Documentation
 
 Deeper context for reviewers and contributors lives in [`docs/`](docs/):
@@ -138,30 +175,7 @@ Deeper context for reviewers and contributors lives in [`docs/`](docs/):
 
 ---
 
-## Tests & CI
-
-Run tests locally:
-
-```bash
-npm test
-```
-
-CI runs on pushes and pull requests using `.github/workflows/ci.yml`.
-
-Current tested areas:
-
-- PII redaction
-- jailbreak / prompt-injection detection
-- blocked-topic detection
-- basic math correction utility
-- payload normalization
-- input safety evaluation
-
----
-
-## Privacy & Safety Commitments
-
-TrustLayer is designed around these commitments:
+## Privacy & safety commitments
 
 - **Minimize exposure** before text reaches a model.
 - **Keep policy behavior inspectable** instead of hidden behind vague claims.
@@ -169,9 +183,7 @@ TrustLayer is designed around these commitments:
 - **Log deterministically for debugging** while avoiding raw sensitive data where possible.
 - **Stay honest about limits**: rule-based checks reduce risk but do not guarantee complete safety.
 
----
-
-## What TrustLayer Does Not Claim
+## What TrustLayer does not claim
 
 TrustLayer does **not** currently claim:
 
@@ -186,13 +198,11 @@ Any use with regulated, youth, medical, legal, or high-risk data needs professio
 
 ---
 
-## Current Status
+## Project status
 
-**Active prototype / portfolio project.**
+**Active prototype / portfolio project (v1.1.0).**
 
-TrustLayer is built to show practical AI safety engineering and privacy-first product thinking. It is suitable as a recruiter/sponsor demo and starting point for deeper hardening.
-
----
+TrustLayer is built to show practical AI safety engineering and privacy-first product thinking. It is suitable as a demo and as a starting point for deeper hardening.
 
 ## Roadmap
 
@@ -206,7 +216,7 @@ TrustLayer is built to show practical AI safety engineering and privacy-first pr
 
 ---
 
-## Built By
+## Built by
 
 **Lyle Perrien II**  
 Founder, **Michigan MindMend Inc.**  
@@ -217,4 +227,4 @@ Building privacy-first, offline-capable AI safety tools for kids, families, and 
 
 ## License
 
-MIT
+[MIT](LICENSE)

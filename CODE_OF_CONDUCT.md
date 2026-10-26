@@ -30,9 +30,9 @@ TrustLayer involves LLM safety, PII redaction, and prompt-injection defense. Ple
 
 ## Reporting Conduct Concerns
 
-Report conduct concerns privately to:
+Report conduct concerns by opening an issue at:
 
-**michiganmindmendinc@proton.me**
+**https://github.com/MiMindMendinc/TrustLayer/issues**
 
 For security vulnerabilities, follow `SECURITY.md` instead of opening a public issue.
 

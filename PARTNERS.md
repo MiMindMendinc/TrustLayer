@@ -17,7 +17,6 @@ Phase 2 underway: production hardening, demo proof, and partner pilots.
 ### Contact
 
 Lyle Perrien II (@p_perrien)  
-michiganmindmendinc@proton.me  
 Michigan
 
 https://github.com/MiMindMendinc

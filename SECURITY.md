@@ -10,9 +10,9 @@ Security reports are welcome for the current `main` branch.
 
 ## Reporting a Vulnerability
 
-Please report security concerns privately by email:
+Please report security concerns privately through GitHub private vulnerability reporting:
 
-**michiganmindmendinc@proton.me**
+**https://github.com/MiMindMendinc/TrustLayer/security/advisories/new**
 
 Please include:
 
